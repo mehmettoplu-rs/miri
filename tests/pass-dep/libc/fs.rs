@@ -36,6 +36,8 @@ fn main() {
     test_rename();
     test_mkdir();
     test_rmdir();
+    test_unlink();
+    test_symlink();
     test_ftruncate::<libc::off_t>(libc::ftruncate);
     #[cfg(target_os = "linux")]
     test_ftruncate::<libc::off64_t>(libc::ftruncate64);
@@ -769,6 +771,41 @@ fn test_rmdir() {
     let err = errno_result(unsafe { libc::rmdir(c_file_path.as_ptr()) }).unwrap_err();
     assert_eq!(err.raw_os_error().unwrap(), libc::ENOTDIR);
     fs::remove_file(&file_path).unwrap();
+}
+
+fn test_unlink() {
+    let path = utils::prepare_with_content("miri_test_libc_unlink.txt", b"hello");
+    let cpath = utils::into_c_string(&path);
+
+    // Unlinking an existing file should succeed.
+    errno_check(unsafe { libc::unlink(cpath.as_ptr()) });
+    assert!(!path.exists());
+
+    // Unlinking it again should fail since it no longer exists.
+    let err = errno_result(unsafe { libc::unlink(cpath.as_ptr()) }).unwrap_err();
+    assert_eq!(err.raw_os_error().unwrap(), libc::ENOENT);
+}
+
+fn test_symlink() {
+    if !utils::have_symlink_permission() {
+        return;
+    }
+    let target = utils::prepare_with_content("miri_test_libc_symlink_target.txt", b"hello");
+    let link = utils::prepare("miri_test_libc_symlink_link.txt");
+    let c_target = utils::into_c_string(&target);
+    let c_link = utils::into_c_string(&link);
+
+    // Creating a symlink should succeed and point to `target`.
+    errno_check(unsafe { libc::symlink(c_target.as_ptr(), c_link.as_ptr()) });
+    assert_eq!(fs::read_link(&link).unwrap(), target);
+
+    // Creating it again should fail since the link already exists.
+    let err =
+        errno_result(unsafe { libc::symlink(c_target.as_ptr(), c_link.as_ptr()) }).unwrap_err();
+    assert_eq!(err.raw_os_error().unwrap(), libc::EEXIST);
+
+    fs::remove_file(&link).unwrap();
+    fs::remove_file(&target).unwrap();
 }
 
 fn test_ftruncate<T: From<i32>>(
